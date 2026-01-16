@@ -1753,10 +1753,39 @@ class GDB(pwndbg.dbg_mod.Debugger):
         else:
             return int(message)
 
+    def _translate_addr_rva(self, address: int) -> Optional[str]:
+        vmmap = pwndbg.aglib.vmmap.get()
+        found_page = None
+        for page in pwndbg.aglib.vmmap.get():
+            if page.vaddr <= address < page.vaddr + page.memsz:
+                found_page = page
+                break
+        if not found_page:
+            return None
+        objfile = found_page.objfile
+        if objfile.startswith('['):
+            rva = found_page.vaddr
+        else:
+            if '/' in objfile:
+                _, _, fn = objfile.rpartition('/')
+                objfile = fn
+            mod_filter = lambda page: found_page.objfile == page.objfile
+            pages = list(filter(mod_filter, vmmap))
+            first_page = min(pages, key=lambda page: page.vaddr)
+
+            rva = address - first_page.vaddr
+        return f"{objfile}+0x{rva:X}"
+
+
     @override
     def addrsz(self, address: Any) -> str:
         address = int(address) & pwndbg.aglib.arch.ptrmask
-        return f"%#{2 * pwndbg.aglib.arch.ptrsize}x" % address
+        ret = f"%#{2 * pwndbg.aglib.arch.ptrsize}x" % address
+        rvasz = self._translate_addr_rva(address)
+        if rvasz:
+            return f"{ret}({rvasz})"
+        return ret
+
 
     @override
     def get_cmd_window_size(self) -> Tuple[Optional[int], Optional[int]]:
